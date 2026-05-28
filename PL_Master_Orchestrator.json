@@ -1,0 +1,32 @@
+{
+  "name": "PL_Master_Orchestrator",
+  "properties": {
+    "description": "Top-level daily orchestrator: ingest -> transform -> data quality -> refresh Power BI dataset.",
+    "activities": [
+      {
+        "name": "Execute_Ingestion",
+        "type": "ExecutePipeline",
+        "typeProperties": { "pipeline": { "referenceName": "PL_Ingest_Metadata_Driven", "type": "PipelineReference" }, "waitOnCompletion": true }
+      },
+      {
+        "name": "Run_DQ_Checks",
+        "type": "DatabricksNotebook",
+        "dependsOn": [ { "activity": "Execute_Ingestion", "dependencyConditions": [ "Succeeded" ] } ],
+        "typeProperties": { "notebookPath": "/Shared/etl/data_quality_checks" },
+        "linkedServiceName": { "referenceName": "LS_Databricks", "type": "LinkedServiceReference" }
+      },
+      {
+        "name": "Refresh_PowerBI_Dataset",
+        "type": "WebActivity",
+        "dependsOn": [ { "activity": "Run_DQ_Checks", "dependencyConditions": [ "Succeeded" ] } ],
+        "typeProperties": {
+          "url": "https://api.powerbi.com/v1.0/myorg/groups/{workspaceId}/datasets/{datasetId}/refreshes",
+          "method": "POST",
+          "authentication": { "type": "MSI", "resource": "https://analysis.windows.net/powerbi/api" },
+          "body": { "type": "Full", "notifyOption": "MailOnFailure" }
+        }
+      }
+    ],
+    "annotations": [ "orchestrator", "daily" ]
+  }
+}

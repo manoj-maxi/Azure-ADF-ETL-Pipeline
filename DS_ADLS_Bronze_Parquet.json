@@ -1,0 +1,17 @@
+{
+  "name": "DS_ADLS_Bronze_Parquet",
+  "properties": {
+    "linkedServiceName": { "referenceName": "LS_ADLS_Gen2", "type": "LinkedServiceReference" },
+    "parameters": { "sinkPath": { "type": "String" } },
+    "type": "Parquet",
+    "typeProperties": {
+      "location": {
+        "type": "AzureBlobFSLocation",
+        "fileSystem": "datalake",
+        "folderPath": { "value": "bronze/@{dataset().sinkPath}/@{formatDateTime(utcNow(),'yyyy/MM/dd')}", "type": "Expression" }
+      },
+      "compressionCodec": "snappy"
+    },
+    "schema": []
+  }
+}

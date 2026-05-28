@@ -1,0 +1,12 @@
+{
+  "name": "DS_AzureSql_Source",
+  "properties": {
+    "linkedServiceName": { "referenceName": "LS_AzureSqlDb", "type": "LinkedServiceReference" },
+    "parameters": { "schema": { "type": "String" }, "table": { "type": "String" } },
+    "type": "AzureSqlTable",
+    "typeProperties": {
+      "schema": { "value": "@dataset().schema", "type": "Expression" },
+      "table": { "value": "@dataset().table", "type": "Expression" }
+    }
+  }
+}

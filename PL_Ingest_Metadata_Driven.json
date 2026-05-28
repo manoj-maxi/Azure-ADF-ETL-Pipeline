@@ -1,0 +1,116 @@
+{
+  "name": "PL_Ingest_Metadata_Driven",
+  "properties": {
+    "description": "Metadata-driven incremental ingestion: reads a control table, loops each source entity, copies changed rows to ADLS, and updates the watermark.",
+    "activities": [
+      {
+        "name": "Lookup_Control_Table",
+        "type": "Lookup",
+        "policy": { "timeout": "0.00:10:00", "retry": 2, "retryIntervalInSeconds": 30 },
+        "typeProperties": {
+          "source": {
+            "type": "AzureSqlSource",
+            "sqlReaderQuery": "SELECT entity_id, source_schema, source_table, sink_path, load_type, watermark_column, watermark_value FROM control.IngestionMetadata WHERE is_active = 1"
+          },
+          "dataset": { "referenceName": "DS_AzureSql_Control", "type": "DatasetReference" },
+          "firstRowOnly": false
+        }
+      },
+      {
+        "name": "ForEach_Entity",
+        "type": "ForEach",
+        "dependsOn": [ { "activity": "Lookup_Control_Table", "dependencyConditions": [ "Succeeded" ] } ],
+        "typeProperties": {
+          "items": { "value": "@activity('Lookup_Control_Table').output.value", "type": "Expression" },
+          "isSequential": false,
+          "batchCount": 6,
+          "activities": [
+            {
+              "name": "Lookup_Watermark",
+              "type": "Lookup",
+              "typeProperties": {
+                "source": {
+                  "type": "AzureSqlSource",
+                  "sqlReaderQuery": {
+                    "value": "SELECT watermark_value FROM control.IngestionMetadata WHERE entity_id = @{item().entity_id}",
+                    "type": "Expression"
+                  }
+                },
+                "dataset": { "referenceName": "DS_AzureSql_Control", "type": "DatasetReference" },
+                "firstRowOnly": true
+              }
+            },
+            {
+              "name": "Copy_Source_to_Lake",
+              "type": "Copy",
+              "dependsOn": [ { "activity": "Lookup_Watermark", "dependencyConditions": [ "Succeeded" ] } ],
+              "policy": { "timeout": "0.02:00:00", "retry": 3, "retryIntervalInSeconds": 60 },
+              "typeProperties": {
+                "source": {
+                  "type": "AzureSqlSource",
+                  "sqlReaderQuery": {
+                    "value": "SELECT * FROM [@{item().source_schema}].[@{item().source_table}] WHERE @{item().watermark_column} > '@{activity('Lookup_Watermark').output.firstRow.watermark_value}'",
+                    "type": "Expression"
+                  },
+                  "queryTimeout": "02:00:00",
+                  "partitionOption": "DynamicRange",
+                  "partitionSettings": { "partitionColumnName": { "value": "@item().watermark_column", "type": "Expression" } }
+                },
+                "sink": {
+                  "type": "ParquetSink",
+                  "storeSettings": { "type": "AzureBlobFSWriteSettings" }
+                },
+                "enableStaging": false,
+                "parallelCopies": 4,
+                "validateDataConsistency": true
+              },
+              "inputs": [ { "referenceName": "DS_AzureSql_Source", "type": "DatasetReference",
+                "parameters": { "schema": "@item().source_schema", "table": "@item().source_table" } } ],
+              "outputs": [ { "referenceName": "DS_ADLS_Bronze_Parquet", "type": "DatasetReference",
+                "parameters": { "sinkPath": "@item().sink_path" } } ]
+            },
+            {
+              "name": "Update_Watermark",
+              "type": "SqlServerStoredProcedure",
+              "dependsOn": [ { "activity": "Copy_Source_to_Lake", "dependencyConditions": [ "Succeeded" ] } ],
+              "typeProperties": {
+                "storedProcedureName": "control.usp_UpdateWatermark",
+                "storedProcedureParameters": {
+                  "entity_id": { "value": "@item().entity_id", "type": "Int32" },
+                  "new_watermark": { "value": "@utcNow()", "type": "String" }
+                }
+              },
+              "linkedServiceName": { "referenceName": "LS_AzureSqlDb", "type": "LinkedServiceReference" }
+            },
+            {
+              "name": "Log_DeadLetter",
+              "type": "SqlServerStoredProcedure",
+              "dependsOn": [ { "activity": "Copy_Source_to_Lake", "dependencyConditions": [ "Failed" ] } ],
+              "typeProperties": {
+                "storedProcedureName": "control.usp_LogFailure",
+                "storedProcedureParameters": {
+                  "entity_id": { "value": "@item().entity_id", "type": "Int32" },
+                  "error_message": { "value": "@activity('Copy_Source_to_Lake').error.message", "type": "String" }
+                }
+              },
+              "linkedServiceName": { "referenceName": "LS_AzureSqlDb", "type": "LinkedServiceReference" }
+            }
+          ]
+        }
+      },
+      {
+        "name": "Execute_Databricks_Transform",
+        "type": "DatabricksNotebook",
+        "dependsOn": [ { "activity": "ForEach_Entity", "dependencyConditions": [ "Completed" ] } ],
+        "policy": { "timeout": "0.01:00:00", "retry": 1 },
+        "typeProperties": {
+          "notebookPath": "/Shared/etl/transform_bronze_to_gold",
+          "baseParameters": { "run_id": { "value": "@pipeline().RunId", "type": "Expression" } }
+        },
+        "linkedServiceName": { "referenceName": "LS_Databricks", "type": "LinkedServiceReference" }
+      }
+    ],
+    "annotations": [ "ingestion", "metadata-driven", "incremental" ],
+    "policy": { "elapsedTimeMetric": { "duration": "0.03:00:00" } }
+  }
+}

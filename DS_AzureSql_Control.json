@@ -1,0 +1,8 @@
+{
+  "name": "DS_AzureSql_Control",
+  "properties": {
+    "linkedServiceName": { "referenceName": "LS_AzureSqlDb", "type": "LinkedServiceReference" },
+    "type": "AzureSqlTable",
+    "typeProperties": { "schema": "control", "table": "IngestionMetadata" }
+  }
+}
